@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Key Change</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<meta name="theme-color" content="#000000">
+<style>
+:root{--bg:#fff;--fg:#000;--mut:#666;--line:#000;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#000;--fg:#fff;--mut:#999;--line:#fff}}
+:root[data-theme="dark"]{--bg:#000;--fg:#fff;--mut:#999;--line:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Arial,sans-serif;padding:14px;max-width:640px;margin:auto}
+h1{font-size:22px;margin:4px 0 12px}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tabs button{flex:1}
+button,input,textarea{font:inherit;color:var(--fg);background:var(--bg);border:2px solid var(--line);border-radius:8px;padding:10px}
+button{cursor:pointer;font-weight:600}
+button.on{background:var(--fg);color:var(--bg)}
+input,textarea{width:100%;margin-bottom:8px}
+textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace}
+.card{border:2px solid var(--line);border-radius:10px;padding:10px;margin:10px 0}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.mut{color:var(--mut);font-size:13px}
+pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:14px;margin:8px 0 0;overflow-x:auto}
+.sm{padding:6px 10px}
+.msg{min-height:20px;font-size:14px;margin:4px 0}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="row"><h1>🎵 Key Change</h1><button class="sm" id="share">Share app</button></div>
+<div class="tabs">
+  <button id="t1" class="on">Page <span id="cnt"></span></button>
+  <button id="t2">Library</button>
+</div>
+<div class="msg" id="msg"></div>
+
+<div id="v1">
+  <div id="page"></div>
+</div>
+
+<div id="v2" class="hide">
+  <div class="card">
+    <input id="ti" placeholder="Song title">
+    <input id="ar" placeholder="Artist">
+    <textarea id="ch" placeholder="Chords / lyrics (e.g. C G Am F)"></textarea>
+    <button id="save" style="width:100%">Save song</button>
+    <div class="mut" id="lib-count"></div>
+  </div>
+  <input id="q" placeholder="Search title or artist">
+  <div id="results"></div>
+</div>
+
+<script>
+const MAX_LIB=200, MAX_PAGE=5;
+let lib=[], pageIds=[], shifts={};
+try{lib=JSON.parse(localStorage.getItem("kc_lib")||"[]");pageIds=JSON.parse(localStorage.getItem("kc_page")||"[]");shifts=JSON.parse(localStorage.getItem("kc_shifts")||"{}")}catch(e){}
+function persist(){try{localStorage.setItem("kc_lib",JSON.stringify(lib));localStorage.setItem("kc_page",JSON.stringify(pageIds));localStorage.setItem("kc_shifts",JSON.stringify(shifts))}catch(e){}}
+const $=id=>document.getElementById(id);
+const norm=s=>s.trim().toLowerCase().replace(/\s+/g," ");
+function say(t){$("msg").textContent=t;setTimeout(()=>{if($("msg").textContent===t)$("msg").textContent=""},3500)}
+function esc(s){return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+const SH=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const FL=["C","Db","D","Eb","E","F","Gb","G","Ab","A","Bb","B"];
+function idx(n){let i=SH.indexOf(n);return i>=0?i:FL.indexOf(n)}
+function tr(root,n,flat){let i=(idx(root)+n+120)%12;return (flat?FL:SH)[i]}
+const SUF=/^(?:maj|min|m|M|dim|aug|sus|add|\d+|[#b+\-()])*$/;
+function transpose(text,n){
+  if(!n)return text;
+  return text.replace(/\S+/g,tok=>{
+    const m=tok.match(/^([A-G][#b]?)([^\/]*)(?:\/([A-G][#b]?))?$/);
+    if(!m||!SUF.test(m[2]))return tok;
+    const flat=m[1].includes("b")||(m[3]||"").includes("b");
+    return tr(m[1],n,flat)+m[2]+(m[3]?"/"+tr(m[3],n,flat):"");
+  });
+}
+
+function show(tab){
+  $("v1").classList.toggle("hide",tab!==1);$("v2").classList.toggle("hide",tab!==2);
+  $("t1").classList.toggle("on",tab===1);$("t2").classList.toggle("on",tab===2);
+}
+$("t1").onclick=()=>show(1);$("t2").onclick=()=>show(2);
+
+$("save").onclick=()=>{
+  const t=$("ti").value.trim(),a=$("ar").value.trim(),c=$("ch").value;
+  if(!t||!a){say("Enter both a title and an artist.");return}
+  if(lib.length>=MAX_LIB){say("Library is full (200 songs). Delete one first.");return}
+  if(lib.some(s=>norm(s.title)===norm(t)&&norm(s.artist)===norm(a))){say("That song by that artist is already saved.");return}
+  lib.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:t,artist:a,chords:c});
+  $("ti").value=$("ar").value=$("ch").value="";
+  persist();say("Saved!");render();
+};
+$("q").oninput=render;
+
+function addToPage(id){
+  if(pageIds.includes(id))return;
+  if(pageIds.length>=MAX_PAGE){say("Page is full (5 songs). Remove one first.");return}
+  pageIds.push(id);shifts[id]=0;persist();say("Added to page.");render();
+}
+function removeFromPage(id){pageIds=pageIds.filter(x=>x!==id);persist();render()}
+function del(id){
+  if(!confirm("Delete this song?"))return;
+  lib=lib.filter(s=>s.id!==id);pageIds=pageIds.filter(x=>x!==id);delete shifts[id];persist();render();
+}
+function shift(id,d){shifts[id]=(((shifts[id]||0)+d)%12+12)%12;if(shifts[id]>6)shifts[id]-=12;persist();render()}
+
+function render(){
+  $("cnt").textContent="("+pageIds.length+"/"+MAX_PAGE+")";
+  $("lib-count").textContent=lib.length+" / "+MAX_LIB+" songs saved";
+  const pg=pageIds.map(id=>lib.find(s=>s.id===id)).filter(Boolean);
+  $("page").innerHTML=pg.length?pg.map(s=>{
+    const n=shifts[s.id]||0;
+    return `<div class="card"><div class="row"><div><b>${esc(s.title)}</b><div class="mut">${esc(s.artist)}</div></div><button class="sm" data-rm="${s.id}">Remove</button></div>
+    <div class="row" style="margin-top:8px"><button class="sm" data-d="-1" data-id="${s.id}">− Key</button><span>${n>0?"+":""}${n} semitones</span><button class="sm" data-d="1" data-id="${s.id}">+ Key</button></div>
+    <pre>${esc(transpose(s.chords,n))}</pre></div>`}).join(""):`<p class="mut">No songs on the page yet. Open Library, search, and add up to 5.</p>`;
+  const q=norm($("q").value);
+  const found=lib.filter(s=>!q||norm(s.title).includes(q)||norm(s.artist).includes(q)).sort((a,b)=>a.title.localeCompare(b.title));
+  $("results").innerHTML=found.length?found.map(s=>{
+    const on=pageIds.includes(s.id);
+    return `<div class="card"><div class="row"><div><b>${esc(s.title)}</b><div class="mut">${esc(s.artist)}</div></div>
+    <div style="display:flex;gap:6px"><button class="sm ${on?"on":""}" data-add="${s.id}">${on?"On page":"Add"}</button><button class="sm" data-del="${s.id}">✕</button></div></div></div>`}).join(""):`<p class="mut">No songs found.</p>`;
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.add)addToPage(b.dataset.add);
+  else if(b.dataset.del)del(b.dataset.del);
+  else if(b.dataset.rm)removeFromPage(b.dataset.rm);
+  else if(b.dataset.d)shift(b.dataset.id,+b.dataset.d);
+});
+$("share").onclick=async()=>{
+  const url=location.href.split("#")[0],text="Try Key Change: save songs and change their chords to any key.";
+  try{
+    if(navigator.share){await navigator.share({title:"Key Change",text,url});return}
+    await navigator.clipboard.writeText(url);say("Link copied. Paste it to your friends.");
+  }catch(e){if(e&&e.name!=="AbortError")say("Copy this link: "+url)}
+};
+render();
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
+</script>
+</body>
+</html>
