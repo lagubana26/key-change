@@ -46,7 +46,7 @@ textarea{min-height:110px;font-family:ui-monospace,Menlo,Consolas,monospace}
 .keybox{display:flex;align-items:center;justify-content:space-between;background:var(--s2);border-radius:14px;padding:8px;margin-top:12px}
 .keyv{text-align:center}
 .keyv b{font-size:26px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
-pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;line-height:1.7;margin:12px 0 0;overflow-x:auto}
+pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs,15px);line-height:1.7;margin:12px 0 0;overflow-x:auto}
 .ch{color:var(--chord);font-weight:700}
 .msg{min-height:20px;font-size:14px;color:var(--chord);margin:0 0 4px;text-align:center}
 .empty{text-align:center;padding:40px 10px;color:var(--mut)}
@@ -56,6 +56,11 @@ pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid var(--ln);background:var(--s1);font-size:14px}
 .dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--ln)}
+.pill{background:var(--s2);color:var(--chord);border-radius:999px;padding:5px 12px;font-weight:700;font-size:13px;white-space:nowrap}
+.acts{display:flex;gap:8px;margin-top:12px}
+.acts button{flex:1}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+.bar input{flex:1;min-width:0;margin:0}
 .hide{display:none}
 </style>
 </head>
@@ -71,7 +76,10 @@ pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-
 </div>
 <div class="msg" id="msg"></div>
 
-<div id="v1"><div id="page"></div></div>
+<div id="v1">
+  <div class="row" style="margin-bottom:2px"><span class="mut">Chord text size</span><div style="display:flex;gap:6px"><button class="sm" id="fsm">A−</button><button class="sm" id="fsp">A+</button></div></div>
+  <div id="page"></div>
+</div>
 
 <div id="v3" class="hide">
   <div class="card">
@@ -87,15 +95,17 @@ pre{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-
 </div>
 
 <div id="v2" class="hide">
-  <div class="card">
+  <div class="bar"><input id="q" placeholder="🔍 Search title or artist"><button id="newbtn" class="pri">+ New</button></div>
+  <div class="card hide" id="formcard">
+    <div class="t" id="formtitle" style="margin-bottom:10px">New song</div>
     <input id="ti" placeholder="Song title">
     <input id="ar" placeholder="Artist">
-    <input id="ky" placeholder="Original key (e.g. G or Em) - optional">
+    <input id="ky" placeholder="Key (leave blank to auto-detect)">
     <textarea id="ch" placeholder="Chords / lyrics (e.g. C G Am F)"></textarea>
-    <button id="save" class="pri" style="width:100%">Save song</button>
-    <div class="mut" id="lib-count" style="margin-top:8px;text-align:center"></div>
+    <div class="mut" id="kyhint" style="margin:-4px 0 10px;min-height:16px"></div>
+    <div class="row"><button id="cancel" class="danger" style="flex:1">Cancel</button><button id="save" class="pri" style="flex:2">Save song</button></div>
   </div>
-  <input id="q" placeholder="Search title or artist">
+  <div class="mut" id="lib-count" style="margin:6px 2px 0"></div>
   <div id="results"></div>
 </div>
 
@@ -124,13 +134,44 @@ function transpose(text,n){
   });
 }
 function paint(text){return text.replace(/\S+/g,tok=>parse(tok)?`<span class="ch">${esc(tok)}</span>`:esc(tok))}
-function baseKey(s){
-  if(s.key)return s.key.trim();
-  const t=(s.chords.match(/\S+/g)||[]).find(x=>parse(x));
-  if(!t)return "";
-  const m=t.match(/^([A-G][#b]?)(m(?!aj)|min)?/);
-  return m?m[1]+(m[2]?"m":""):"";
+const FLATMAJ=[5,10,3,8,1],FLATMIN=[2,7,0,5,10,3];
+const MAJ=[[0,"M"],[2,"m"],[4,"m"],[5,"M"],[7,"M"],[9,"m"],[11,"d"]];
+const MIN=[[0,"m"],[2,"d"],[3,"M"],[5,"m"],[7,"m"],[8,"M"],[10,"M"]];
+function chordList(text){
+  const out=[];
+  (text.match(/\S+/g)||[]).forEach(tok=>{
+    const m=parse(tok);if(!m)return;
+    const r=idx(m[1]);if(r<0)return;
+    out.push({r,q:/^dim/.test(m[2])?"d":(/^(m(?!aj)|min)/.test(m[2])?"m":"M")});
+  });
+  return out;
 }
+function detectKey(text){
+  const ch=chordList(text);if(!ch.length)return "";
+  let best=null;
+  for(let t=0;t<12;t++)for(const minor of [false,true]){
+    const sc=minor?MIN:MAJ,tonic=minor?"m":"M";let score=0;
+    for(const c of ch){
+      const d=sc.find(x=>(x[0]+t)%12===c.r);
+      if(d)score+=d[1]===c.q?1:0.4;
+      else if(minor&&c.r===(t+7)%12&&c.q==="M")score+=0.8;
+      else score-=0.6;
+    }
+    if(ch[0].r===t&&ch[0].q===tonic)score+=2;
+    const last=ch[ch.length-1];
+    if(last.r===t&&last.q===tonic)score+=1.5;
+    if(!best||score>best.s)best={s:score,t,minor};
+  }
+  const flat=(best.minor?FLATMIN:FLATMAJ).includes(best.t);
+  return (flat?FL:SH)[best.t]+(best.minor?"m":"");
+}
+function normKey(k){
+  const m=k.trim().match(/^([A-Ga-g])([#b♯♭]?)\s*(minor|min|m)?\s*(major|maj)?$/);
+  if(!m)return "";
+  const root=m[1].toUpperCase()+m[2].replace("♯","#").replace("♭","b");
+  return idx(root)<0?"":root+(m[3]?"m":"");
+}
+function baseKey(s){return s.key?s.key.trim():detectKey(s.chords)}
 function keyNow(s,n){const b=baseKey(s);return b?transpose(b,n):"?"}
 
 function show(tab){
@@ -138,14 +179,45 @@ function show(tab){
 }
 $("t1").onclick=()=>show(1);$("t2").onclick=()=>show(2);$("t3").onclick=()=>show(3);
 
+let editId=null;
+function hint(){
+  const k=detectKey($("ch").value);
+  $("ky").placeholder=k?"Key (blank = auto: "+k+")":"Key (leave blank to auto-detect)";
+  $("kyhint").textContent=k?"Detected key: "+k:"";
+}
+$("ch").oninput=hint;
+function openForm(song){
+  editId=song?song.id:null;
+  $("formtitle").textContent=song?"Edit song":"New song";
+  $("save").textContent=song?"Update song":"Save song";
+  $("ti").value=song?song.title:"";$("ar").value=song?song.artist:"";
+  $("ky").value=song&&!song.auto?(song.key||""):"";$("ch").value=song?song.chords:"";
+  $("formcard").classList.remove("hide");hint();show(2);
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+function closeForm(){
+  editId=null;$("formcard").classList.add("hide");
+  $("ti").value=$("ar").value=$("ch").value=$("ky").value="";hint();
+}
+$("newbtn").onclick=()=>$("formcard").classList.contains("hide")?openForm(null):closeForm();
+$("cancel").onclick=closeForm;
 $("save").onclick=()=>{
   const t=$("ti").value.trim(),a=$("ar").value.trim(),c=$("ch").value;
   if(!t||!a){say("Enter both a title and an artist.");return}
-  if(lib.length>=MAX_LIB){say("Library is full (200 songs). Delete one first.");return}
-  if(lib.some(s=>norm(s.title)===norm(t)&&norm(s.artist)===norm(a))){say("That song by that artist is already saved.");return}
-  lib.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:t,artist:a,key:$("ky").value.trim(),chords:c});
-  $("ti").value=$("ar").value=$("ch").value=$("ky").value="";
-  persist();say("Saved!");render();
+  if(editId===null&&lib.length>=MAX_LIB){say("Library is full (200 songs). Delete one first.");return}
+  if(lib.some(s=>s.id!==editId&&norm(s.title)===norm(t)&&norm(s.artist)===norm(a))){say("That song by that artist is already saved.");return}
+  let k=$("ky").value.trim(),auto=false;
+  if(k){k=normKey(k);if(!k){say("Key should look like G, F#, Bb or Em.");return}}
+  else{k=detectKey(c);auto=!!k}
+  if(editId!==null){
+    const s=lib.find(x=>x.id===editId);
+    if(s)Object.assign(s,{title:t,artist:a,key:k,auto,chords:c});
+    say("Updated! Key: "+(k||"?"));
+  }else{
+    lib.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:t,artist:a,key:k,auto,chords:c});
+    say("Saved! "+(k?(auto?"Detected key: ":"Key: ")+k:"No key found"));
+  }
+  persist();closeForm();render();
 };
 $("q").oninput=render;
 
@@ -168,6 +240,10 @@ $("share").onclick=async()=>{
     await navigator.clipboard.writeText(url);say("Link copied. Paste it to your friends.");
   }catch(e){if(e&&e.name!=="AbortError")say("Copy this link: "+url)}
 };
+
+let fs=15;try{fs=+localStorage.getItem("kc_fs")||15}catch(e){}
+function setFs(v){fs=Math.max(11,Math.min(26,v));document.documentElement.style.setProperty("--fs",fs+"px");try{localStorage.setItem("kc_fs",fs)}catch(e){}}
+$("fsm").onclick=()=>setFs(fs-1);$("fsp").onclick=()=>setFs(fs+1);setFs(fs);
 
 const DEF={bg:"#0f0d1a",tx:"#f4f1ff",ac:"#8b5cf6"};
 const PRESETS=[
@@ -205,16 +281,19 @@ function render(){
   $("lib-count").textContent=lib.length+" / "+MAX_LIB+" songs saved";
   const pg=pageIds.map(id=>lib.find(s=>s.id===id)).filter(Boolean);
   $("page").innerHTML=pg.length?pg.map(s=>{
-    const n=shifts[s.id]||0;
-    return `<div class="card"><div class="row"><div><div class="t">${esc(s.title)}</div><div class="mut">${esc(s.artist)}</div></div><button class="sm danger" data-rm="${s.id}">Remove</button></div>
-    <div class="keybox"><button class="sm" data-d="-1" data-id="${s.id}">− Key</button><div class="keyv"><div class="mut">Key</div><b>${esc(keyNow(s,n))}</b><div class="mut">${n>0?"+":""}${n} semitones</div></div><button class="sm" data-d="1" data-id="${s.id}">+ Key</button></div>
-    <pre>${paint(transpose(s.chords,n))}</pre></div>`}).join(""):`<div class="empty"><div>🎶</div>No songs on the page yet.<br>Open Library, search, and add up to 5.</div>`;
+    const n=shifts[s.id]||0,b=baseKey(s);
+    return `<div class="card">
+    <div class="row"><div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="mut">${esc(s.artist)}</div></div><span class="pill">Original ${esc(b||"?")}</span></div>
+    <div class="keybox"><button class="sm" data-d="-1" data-id="${s.id}">− Key</button><div class="keyv"><div class="mut">Playing in</div><b>${esc(keyNow(s,n))}</b><div class="mut">${n>0?"+":""}${n} semitones</div></div><button class="sm" data-d="1" data-id="${s.id}">+ Key</button></div>
+    ${n?`<button class="sm danger" data-orig="${s.id}" style="margin-top:8px;width:100%">Back to original key</button>`:""}
+    <pre>${paint(transpose(s.chords,n))}</pre>
+    <div class="acts"><button class="sm" data-edit="${s.id}">✎ Edit chords</button><button class="sm danger" data-rm="${s.id}">Remove</button></div></div>`}).join(""):`<div class="empty"><div>🎶</div>No songs on the page yet.<br>Open Library, search, and add up to 5.</div>`;
   const q=norm($("q").value);
   const found=lib.filter(s=>!q||norm(s.title).includes(q)||norm(s.artist).includes(q)).sort((a,b)=>a.title.localeCompare(b.title));
   $("results").innerHTML=found.length?found.map(s=>{
     const on=pageIds.includes(s.id),k=baseKey(s);
-    return `<div class="card"><div class="row"><div><div class="t">${esc(s.title)}</div><div class="mut">${esc(s.artist)}${k?`<span class="badge">Key ${esc(k)}</span>`:""}</div></div>
-    <div style="display:flex;gap:6px"><button class="sm ${on?"":"pri"}" data-add="${s.id}">${on?"On page":"Add"}</button><button class="sm danger" data-del="${s.id}">✕</button></div></div></div>`}).join(""):`<div class="empty"><div>🔍</div>No songs found.</div>`;
+    return `<div class="card"><div class="row"><div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="mut">${esc(s.artist)}</div></div>${k?`<span class="pill">Key ${esc(k)}${s.auto?" · auto":""}</span>`:""}</div>
+    <div class="acts"><button class="sm ${on?"":"pri"}" data-add="${s.id}">${on?"On page":"Add to page"}</button><button class="sm" data-edit="${s.id}">✎ Edit</button><button class="sm danger" data-del="${s.id}">Delete</button></div></div>`}).join(""):`<div class="empty"><div>${lib.length?"🔍":"🎸"}</div>${lib.length?"No songs found.":"Your library is empty.<br>Tap + New to add your first song."}</div>`;
 }
 document.addEventListener("click",e=>{
   const b=e.target.closest("button");if(!b)return;
@@ -222,6 +301,8 @@ document.addEventListener("click",e=>{
   else if(b.dataset.del)del(b.dataset.del);
   else if(b.dataset.rm)removeFromPage(b.dataset.rm);
   else if(b.dataset.d)shift(b.dataset.id,+b.dataset.d);
+  else if(b.dataset.edit){const x=lib.find(y=>y.id===b.dataset.edit);if(x)openForm(x)}
+  else if(b.dataset.orig){shifts[b.dataset.orig]=0;persist();render()}
 });
 render();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
